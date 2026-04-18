@@ -12,10 +12,12 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  type TaskStatus = 'Wishlist' | 'Applied' | 'FirstInterview' | 'SecondInterview' | 'ThirdInterview' | 'Offer' | 'Closed';
+
   const [newTask, setNewTask] = useState({
     company: '',
     position: '',
-    status: 'Wishlist' as const,
+    status: 'Wishlist' as TaskStatus,
     deadline: new Date().toISOString().split('T')[0],
     notes: '',
   });
@@ -315,37 +317,37 @@ export default function HomePage() {
                 <div className="absolute inset-0 grid grid-cols-7 gap-4 h-full">
                   <div 
                     className="col-span-1 border border-border rounded-lg bg-muted/30"
-                    onDrop={(e) => handleDrop(e, 'Wishlist')}
+                    onDrop={(e) => handleDrop(e, 'Wishlist', null)}
                     onDragOver={handleDragOver}
                   />
                   <div 
                     className="col-span-1 border border-border rounded-lg bg-muted/30"
-                    onDrop={(e) => handleDrop(e, 'Applied')}
+                    onDrop={(e) => handleDrop(e, 'Applied', null)}
                     onDragOver={handleDragOver}
                   />
                   <div 
                     className="col-span-1 border border-border rounded-lg bg-muted/30"
-                    onDrop={(e) => handleDrop(e, 'FirstInterview')}
+                    onDrop={(e) => handleDrop(e, 'FirstInterview', null)}
                     onDragOver={handleDragOver}
                   />
                   <div 
                     className="col-span-1 border border-border rounded-lg bg-muted/30"
-                    onDrop={(e) => handleDrop(e, 'SecondInterview')}
+                    onDrop={(e) => handleDrop(e, 'SecondInterview', null)}
                     onDragOver={handleDragOver}
                   />
                   <div 
                     className="col-span-1 border border-border rounded-lg bg-muted/30"
-                    onDrop={(e) => handleDrop(e, 'ThirdInterview')}
+                    onDrop={(e) => handleDrop(e, 'ThirdInterview', null)}
                     onDragOver={handleDragOver}
                   />
                   <div 
                     className="col-span-1 border border-border rounded-lg bg-muted/30"
-                    onDrop={(e) => handleDrop(e, 'Offer')}
+                    onDrop={(e) => handleDrop(e, 'Offer', null)}
                     onDragOver={handleDragOver}
                   />
                   <div 
                     className="col-span-1 border border-border rounded-lg bg-muted/30"
-                    onDrop={(e) => handleDrop(e, 'Closed')}
+                    onDrop={(e) => handleDrop(e, 'Closed', null)}
                     onDragOver={handleDragOver}
                   />
                 </div>

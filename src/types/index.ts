@@ -12,7 +12,7 @@ export interface Task {
   position: string;
   city: string;
   salary: string;
-  status: 'Wishlist' | 'Applied' | 'Testing' | 'Interviewing' | 'Offer' | 'Closed';
+  status: 'Wishlist' | 'Applied' | 'FirstInterview' | 'SecondInterview' | 'ThirdInterview' | 'Offer' | 'Closed';
   deadline: string | null;
   resume_version: string | null;
   notes: string | null;

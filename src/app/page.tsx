@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { Task } from '@/types';
@@ -11,25 +11,39 @@ export default function HomePage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [newTask, setNewTask] = useState({
-    title: '',
     company: '',
     position: '',
-    city: '',
-    salary: '',
     status: 'Wishlist' as const,
-    deadline: '',
-    resume_version: '',
+    deadline: new Date().toISOString().split('T')[0],
     notes: '',
   });
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
   useEffect(() => {
+    // 当认证状态变化时
     if (status === 'unauthenticated') {
       router.push('/auth/signin');
-    } else if (session?.user?.id) {
+      setLoading(false);
+    } else if (status === 'authenticated' && session?.user?.id) {
       fetchTasks(session.user.id);
+    } else if (status === 'authenticated' && !session?.user?.id) {
+      setLoading(false);
+    } else if (status === 'loading') {
+      // 认证状态正在加载，保持 loading 为 true
+    } else {
+      // 其他情况，设置 loading 为 false
+      setLoading(false);
     }
   }, [status, session, router]);
+
+  // 确保在组件挂载时，如果认证状态不是 loading，就设置 loading 为 false
+  useEffect(() => {
+    if (status !== 'loading') {
+      setLoading(false);
+    }
+  }, [status]);
 
   const fetchTasks = async (userId: string) => {
     try {
@@ -57,6 +71,7 @@ export default function HomePage() {
         },
         body: JSON.stringify({
           ...newTask,
+          title: `${newTask.company} - ${newTask.position}`,
           user_id: session.user.id,
         }),
       });
@@ -66,14 +81,10 @@ export default function HomePage() {
         setTasks([...tasks, data.task]);
         setShowAddModal(false);
         setNewTask({
-          title: '',
           company: '',
           position: '',
-          city: '',
-          salary: '',
           status: 'Wishlist' as const,
-          deadline: '',
-          resume_version: '',
+          deadline: new Date().toISOString().split('T')[0],
           notes: '',
         });
       }
@@ -94,7 +105,7 @@ export default function HomePage() {
 
       if (response.ok) {
         const data = await response.json();
-        setTasks(tasks.map(task => task.id === taskId ? data.task : task));
+        setTasks(prevTasks => prevTasks.map(task => task.id === taskId ? data.task : task));
       }
     } catch (error) {
       console.error('更新任务失败:', error);
@@ -117,260 +128,279 @@ export default function HomePage() {
     }
   };
 
-  const getTasksByStatus = (status: string) => {
-    return tasks.filter(task => task.status === status);
+  const handleEditTask = (task: Task) => {
+    setEditingTask(task);
+    setNewTask({
+      company: task.company || '',
+      position: task.position || '',
+      status: task.status as 'Wishlist' | 'Applied' | 'FirstInterview' | 'SecondInterview' | 'ThirdInterview' | 'Offer' | 'Closed',
+      deadline: task.deadline || new Date().toISOString().split('T')[0],
+      notes: task.notes || '',
+    });
+    setShowEditModal(true);
   };
 
-  // 处理拖拽开始
-  const handleDragStart = (e: React.DragEvent, taskId: string) => {
-    e.dataTransfer.setData('taskId', taskId);
-  };
-
-  // 处理拖拽结束
-  const handleDragEnd = (e: React.DragEvent) => {
-    e.dataTransfer.clearData();
-  };
-
-  // 处理拖拽放置
-  const handleDrop = (e: React.DragEvent, newStatus: Task['status']) => {
+  const handleUpdateTaskSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const taskId = e.dataTransfer.getData('taskId');
-    if (taskId) {
-      handleUpdateTask(taskId, { status: newStatus });
+    if (!editingTask || !session?.user?.id) return;
+
+    try {
+      const response = await fetch('/api/tasks', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: editingTask.id,
+          company: newTask.company,
+          position: newTask.position,
+          status: newTask.status,
+          deadline: newTask.deadline,
+          notes: newTask.notes,
+          title: `${newTask.company} - ${newTask.position}`,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setTasks(prevTasks => prevTasks.map(task => task.id === editingTask.id ? data.task : task));
+        setShowEditModal(false);
+        setEditingTask(null);
+        setNewTask({
+          company: '',
+          position: '',
+          status: 'Wishlist' as const,
+          deadline: new Date().toISOString().split('T')[0],
+          notes: '',
+        });
+      }
+    } catch (error) {
+      console.error('更新任务失败:', error);
     }
   };
 
-  // 处理拖拽经过
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
+  const getStatusIndex = (status: string) => {
+    const statusOrder = ['Wishlist', 'Applied', 'FirstInterview', 'SecondInterview', 'ThirdInterview', 'Offer', 'Closed'];
+    return statusOrder.indexOf(status);
   };
+
+  const getStatusSpan = (status: string) => {
+    const statusOrder = ['Wishlist', 'Applied', 'FirstInterview', 'SecondInterview', 'ThirdInterview', 'Offer', 'Closed'];
+    const index = statusOrder.indexOf(status);
+    return index + 1;
+  };
+
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+
+  const handleDragStart = useCallback((e: React.DragEvent, taskId: string) => {
+    e.dataTransfer.setData('taskId', taskId);
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggedTaskId(taskId);
+  }, []);
+
+  const handleDragEnd = useCallback((e: React.DragEvent) => {
+    e.dataTransfer.clearData();
+    setDraggedTaskId(null);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent, newStatus: Task['status'] | null, targetTaskId: string | null) => {
+    e.preventDefault();
+    const taskId = e.dataTransfer.getData('taskId');
+    if (taskId) {
+      if (targetTaskId && taskId !== targetTaskId) {
+        // 垂直拖拽排序
+        const draggedIndex = tasks.findIndex(t => t.id === taskId);
+        const targetIndex = tasks.findIndex(t => t.id === targetTaskId);
+        
+        if (draggedIndex !== -1 && targetIndex !== -1) {
+          const newTasks = [...tasks];
+          const [draggedTask] = newTasks.splice(draggedIndex, 1);
+          newTasks.splice(targetIndex, 0, draggedTask);
+          setTasks(newTasks);
+        }
+      } else if (newStatus) {
+        // 水平拖拽改变状态
+        const today = new Date().toISOString().split('T')[0];
+        handleUpdateTask(taskId, { status: newStatus, deadline: today });
+      }
+    }
+  }, [tasks, handleUpdateTask]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  }, []);
 
   if (status === 'loading' || loading) {
     return <div className="flex items-center justify-center min-h-screen">加载中...</div>;
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* 头部 */}
-      <header className="bg-white shadow-sm">
+    <div className="min-h-screen bg-background">
+      <header className="bg-white shadow-sm border-b border-border">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-gray-900">求职管理系统</h1>
+          <h1 className="text-2xl font-bold text-foreground">求职管理系统</h1>
           <div className="flex items-center space-x-4">
             <button
               onClick={() => setShowAddModal(true)}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+              className="btn btn-primary"
             >
               + 新增任务
             </button>
-            <div className="text-sm text-gray-600">
+            <div className="text-sm text-foreground/70">
               {session?.user?.email}
             </div>
           </div>
         </div>
       </header>
 
-      {/* 主内容 */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex overflow-x-auto space-x-4 pb-4">
-          {/* 意向池 */}
-          <div 
-            className="kanban-column"
-            onDrop={(e) => handleDrop(e, 'Wishlist')}
-            onDragOver={handleDragOver}
-          >
-            <h2 className="text-lg font-semibold mb-4">意向池 ({getTasksByStatus('Wishlist').length})</h2>
-            {getTasksByStatus('Wishlist').map(task => (
-              <div 
-                key={task.id} 
-                className="kanban-card"
-                draggable
-                onDragStart={(e) => handleDragStart(e, task.id)}
-                onDragEnd={handleDragEnd}
-              >
-                <h3 className="font-medium text-gray-900">{task.title}</h3>
-                <p className="text-sm text-gray-600">{task.company}</p>
-                <p className="text-sm text-gray-600">{task.position}</p>
-                <div className="mt-2 flex justify-end">
-                  <button
-                    onClick={() => handleDeleteTask(task.id)}
-                    className="text-xs text-red-600 hover:text-red-800"
-                  >
-                    删除
-                  </button>
-                </div>
-              </div>
-            ))}
+        {/* 状态标题行 */}
+        <div className="grid grid-cols-7 gap-4 mb-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">意向</h2>
+            <span className="bg-light text-primary px-2 py-1 rounded-full text-xs font-medium">
+              {tasks.filter(t => t.status === 'Wishlist').length}
+            </span>
           </div>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">已投递</h2>
+            <span className="bg-light text-primary px-2 py-1 rounded-full text-xs font-medium">
+              {tasks.filter(t => t.status === 'Applied').length}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">一面</h2>
+            <span className="bg-light text-primary px-2 py-1 rounded-full text-xs font-medium">
+              {tasks.filter(t => t.status === 'FirstInterview').length}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">二面</h2>
+            <span className="bg-light text-primary px-2 py-1 rounded-full text-xs font-medium">
+              {tasks.filter(t => t.status === 'SecondInterview').length}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">三面</h2>
+            <span className="bg-light text-primary px-2 py-1 rounded-full text-xs font-medium">
+              {tasks.filter(t => t.status === 'ThirdInterview').length}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">Offer</h2>
+            <span className="bg-light text-primary px-2 py-1 rounded-full text-xs font-medium">
+              {tasks.filter(t => t.status === 'Offer').length}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-foreground">失败</h2>
+            <span className="bg-light text-primary px-2 py-1 rounded-full text-xs font-medium">
+              {tasks.filter(t => t.status === 'Closed').length}
+            </span>
+          </div>
+        </div>
 
-          {/* 已投递 */}
-          <div 
-            className="kanban-column"
-            onDrop={(e) => handleDrop(e, 'Applied')}
-            onDragOver={handleDragOver}
-          >
-            <h2 className="text-lg font-semibold mb-4">已投递 ({getTasksByStatus('Applied').length})</h2>
-            {getTasksByStatus('Applied').map(task => (
+        {/* 任务卡片区域 */}
+        <div className="relative">
+          {tasks.map((task) => {
+            const statusSpan = getStatusSpan(task.status);
+            
+            return (
               <div 
-                key={task.id} 
-                className="kanban-card"
-                draggable
-                onDragStart={(e) => handleDragStart(e, task.id)}
-                onDragEnd={handleDragEnd}
+                key={task.id}
+                className="relative mb-4 h-28"
               >
-                <h3 className="font-medium text-gray-900">{task.title}</h3>
-                <p className="text-sm text-gray-600">{task.company}</p>
-                <p className="text-sm text-gray-600">{task.position}</p>
-                <div className="mt-2 flex justify-end">
-                  <button
-                    onClick={() => handleDeleteTask(task.id)}
-                    className="text-xs text-red-600 hover:text-red-800"
-                  >
-                    删除
-                  </button>
+                {/* 拖拽区域 - 放在卡片下面 */}
+                <div className="absolute inset-0 grid grid-cols-7 gap-4 h-full">
+                  <div 
+                    className="col-span-1 border border-border rounded-lg bg-muted/30"
+                    onDrop={(e) => handleDrop(e, 'Wishlist')}
+                    onDragOver={handleDragOver}
+                  />
+                  <div 
+                    className="col-span-1 border border-border rounded-lg bg-muted/30"
+                    onDrop={(e) => handleDrop(e, 'Applied')}
+                    onDragOver={handleDragOver}
+                  />
+                  <div 
+                    className="col-span-1 border border-border rounded-lg bg-muted/30"
+                    onDrop={(e) => handleDrop(e, 'FirstInterview')}
+                    onDragOver={handleDragOver}
+                  />
+                  <div 
+                    className="col-span-1 border border-border rounded-lg bg-muted/30"
+                    onDrop={(e) => handleDrop(e, 'SecondInterview')}
+                    onDragOver={handleDragOver}
+                  />
+                  <div 
+                    className="col-span-1 border border-border rounded-lg bg-muted/30"
+                    onDrop={(e) => handleDrop(e, 'ThirdInterview')}
+                    onDragOver={handleDragOver}
+                  />
+                  <div 
+                    className="col-span-1 border border-border rounded-lg bg-muted/30"
+                    onDrop={(e) => handleDrop(e, 'Offer')}
+                    onDragOver={handleDragOver}
+                  />
+                  <div 
+                    className="col-span-1 border border-border rounded-lg bg-muted/30"
+                    onDrop={(e) => handleDrop(e, 'Closed')}
+                    onDragOver={handleDragOver}
+                  />
                 </div>
-              </div>
-            ))}
-          </div>
 
-          {/* 测评/笔试中 */}
-          <div 
-            className="kanban-column"
-            onDrop={(e) => handleDrop(e, 'Testing')}
-            onDragOver={handleDragOver}
-          >
-            <h2 className="text-lg font-semibold mb-4">测评/笔试中 ({getTasksByStatus('Testing').length})</h2>
-            {getTasksByStatus('Testing').map(task => (
-              <div 
-                key={task.id} 
-                className="kanban-card"
-                draggable
-                onDragStart={(e) => handleDragStart(e, task.id)}
-                onDragEnd={handleDragEnd}
-              >
-                <h3 className="font-medium text-gray-900">{task.title}</h3>
-                <p className="text-sm text-gray-600">{task.company}</p>
-                <p className="text-sm text-gray-600">{task.position}</p>
-                <div className="mt-2 flex justify-end">
-                  <button
-                    onClick={() => handleDeleteTask(task.id)}
-                    className="text-xs text-red-600 hover:text-red-800"
-                  >
-                    删除
-                  </button>
+                {/* 任务卡片 */}
+                <div
+                  className={`kanban-card absolute top-0 left-0 h-full p-3 border border-border rounded-lg bg-white shadow-sm flex flex-col justify-between ${draggedTaskId === task.id ? 'opacity-50' : ''}`}
+                  style={{
+                    left: '0%', // 固定在意向栏
+                    width: `${(statusSpan / 7) * 100}%`, // 根据状态调整宽度
+                    zIndex: 10,
+                    boxSizing: 'border-box'
+                  }}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, task.id)}
+                  onDragEnd={handleDragEnd}
+                  onDrop={(e) => handleDrop(e, null, task.id)}
+                  onDragOver={handleDragOver}
+                >
+                  <div>
+                    <h3 className="font-medium text-foreground truncate">{task.company}</h3>
+                    <p className="text-sm text-foreground/70 truncate">{task.position}</p>
+                    {task.deadline && (
+                      <p className="text-xs text-foreground/60 mt-1">重要日期: {new Date(task.deadline).toLocaleDateString()}</p>
+                    )}
+                  </div>
+                  <div className="flex justify-end space-x-2">
+                    <button
+                      onClick={() => handleEditTask(task)}
+                      className="btn btn-secondary text-xs py-1 px-2 w-16 text-center flex items-center justify-center whitespace-nowrap"
+                      style={{ height: '24px' }}
+                    >
+                      修改
+                    </button>
+                    <button
+                      onClick={() => handleDeleteTask(task.id)}
+                      className="btn btn-danger text-xs py-1 px-2 w-16 text-center flex items-center justify-center whitespace-nowrap"
+                      style={{ height: '24px' }}
+                    >
+                      删除
+                    </button>
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
-
-          {/* 面试中 */}
-          <div 
-            className="kanban-column"
-            onDrop={(e) => handleDrop(e, 'Interviewing')}
-            onDragOver={handleDragOver}
-          >
-            <h2 className="text-lg font-semibold mb-4">面试中 ({getTasksByStatus('Interviewing').length})</h2>
-            {getTasksByStatus('Interviewing').map(task => (
-              <div 
-                key={task.id} 
-                className="kanban-card"
-                draggable
-                onDragStart={(e) => handleDragStart(e, task.id)}
-                onDragEnd={handleDragEnd}
-              >
-                <h3 className="font-medium text-gray-900">{task.title}</h3>
-                <p className="text-sm text-gray-600">{task.company}</p>
-                <p className="text-sm text-gray-600">{task.position}</p>
-                <div className="mt-2 flex justify-end">
-                  <button
-                    onClick={() => handleDeleteTask(task.id)}
-                    className="text-xs text-red-600 hover:text-red-800"
-                  >
-                    删除
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* 录用 */}
-          <div 
-            className="kanban-column"
-            onDrop={(e) => handleDrop(e, 'Offer')}
-            onDragOver={handleDragOver}
-          >
-            <h2 className="text-lg font-semibold mb-4">录用 ({getTasksByStatus('Offer').length})</h2>
-            {getTasksByStatus('Offer').map(task => (
-              <div 
-                key={task.id} 
-                className="kanban-card"
-                draggable
-                onDragStart={(e) => handleDragStart(e, task.id)}
-                onDragEnd={handleDragEnd}
-              >
-                <h3 className="font-medium text-gray-900">{task.title}</h3>
-                <p className="text-sm text-gray-600">{task.company}</p>
-                <p className="text-sm text-gray-600">{task.position}</p>
-                <div className="mt-2 flex justify-end">
-                  <button
-                    onClick={() => handleDeleteTask(task.id)}
-                    className="text-xs text-red-600 hover:text-red-800"
-                  >
-                    删除
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* 遗憾结案 */}
-          <div 
-            className="kanban-column"
-            onDrop={(e) => handleDrop(e, 'Closed')}
-            onDragOver={handleDragOver}
-          >
-            <h2 className="text-lg font-semibold mb-4">遗憾结案 ({getTasksByStatus('Closed').length})</h2>
-            {getTasksByStatus('Closed').map(task => (
-              <div 
-                key={task.id} 
-                className="kanban-card"
-                draggable
-                onDragStart={(e) => handleDragStart(e, task.id)}
-                onDragEnd={handleDragEnd}
-              >
-                <h3 className="font-medium text-gray-900">{task.title}</h3>
-                <p className="text-sm text-gray-600">{task.company}</p>
-                <p className="text-sm text-gray-600">{task.position}</p>
-                <div className="mt-2 flex justify-end">
-                  <button
-                    onClick={() => handleDeleteTask(task.id)}
-                    className="text-xs text-red-600 hover:text-red-800"
-                  >
-                    删除
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
       </main>
 
-      {/* 新增任务弹窗 */}
       {showAddModal && (
         <div className="modal">
           <div className="modal-content max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold mb-4">新增任务</h2>
             <form onSubmit={handleAddTask}>
               <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">标题</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    value={newTask.title}
-                    onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
-                    required
-                  />
-                </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">公司</label>
                   <input
@@ -392,54 +422,28 @@ export default function HomePage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">城市</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    value={newTask.city}
-                    onChange={(e) => setNewTask({ ...newTask, city: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">薪资</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    value={newTask.salary}
-                    onChange={(e) => setNewTask({ ...newTask, salary: e.target.value })}
-                  />
-                </div>
-                <div>
                   <label className="block text-sm font-medium text-gray-700">状态</label>
                   <select
                     className="form-input"
                     value={newTask.status}
                     onChange={(e) => setNewTask({ ...newTask, status: e.target.value as any })}
                   >
-                    <option value="Wishlist">意向池</option>
+                    <option value="Wishlist">意向</option>
                     <option value="Applied">已投递</option>
-                    <option value="Testing">测评/笔试中</option>
-                    <option value="Interviewing">面试中</option>
-                    <option value="Offer">录用</option>
-                    <option value="Closed">遗憾结案</option>
+                    <option value="FirstInterview">一面</option>
+                    <option value="SecondInterview">二面</option>
+                    <option value="ThirdInterview">三面</option>
+                    <option value="Offer">Offer</option>
+                    <option value="Closed">失败</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">截止日期</label>
+                  <label className="block text-sm font-medium text-gray-700">重要日期</label>
                   <input
                     type="date"
                     className="form-input"
                     value={newTask.deadline}
                     onChange={(e) => setNewTask({ ...newTask, deadline: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">简历版本</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    value={newTask.resume_version}
-                    onChange={(e) => setNewTask({ ...newTask, resume_version: e.target.value })}
                   />
                 </div>
                 <div>
@@ -456,15 +460,106 @@ export default function HomePage() {
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300"
+                  className="btn btn-secondary"
                 >
                   取消
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                  className="btn btn-primary"
                 >
                   新增任务
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showEditModal && (
+        <div className="modal">
+          <div className="modal-content max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-semibold mb-4">修改任务</h2>
+            <form onSubmit={handleUpdateTaskSubmit}>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">公司</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={newTask.company}
+                    onChange={(e) => setNewTask({ ...newTask, company: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">职位</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={newTask.position}
+                    onChange={(e) => setNewTask({ ...newTask, position: e.target.value })}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">状态</label>
+                  <select
+                    className="form-input"
+                    value={newTask.status}
+                    onChange={(e) => setNewTask({ ...newTask, status: e.target.value as any })}
+                  >
+                    <option value="Wishlist">意向</option>
+                    <option value="Applied">已投递</option>
+                    <option value="FirstInterview">一面</option>
+                    <option value="SecondInterview">二面</option>
+                    <option value="ThirdInterview">三面</option>
+                    <option value="Offer">Offer</option>
+                    <option value="Closed">失败</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">重要日期</label>
+                  <input
+                    type="date"
+                    className="form-input"
+                    value={newTask.deadline}
+                    onChange={(e) => setNewTask({ ...newTask, deadline: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">备注</label>
+                  <textarea
+                    className="form-input"
+                    value={newTask.notes}
+                    onChange={(e) => setNewTask({ ...newTask, notes: e.target.value })}
+                    rows={3}
+                  />
+                </div>
+              </div>
+              <div className="mt-6 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditModal(false);
+                    setEditingTask(null);
+                    setNewTask({
+                      company: '',
+                      position: '',
+                      status: 'Wishlist' as const,
+                      deadline: new Date().toISOString().split('T')[0],
+                      notes: '',
+                    });
+                  }}
+                  className="btn btn-secondary"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                >
+                  保存修改
                 </button>
               </div>
             </form>

@@ -29,8 +29,8 @@ export async function POST(request: NextRequest) {
   try {
     const task = await request.json();
 
-    if (!task.user_id || !task.title || !task.status) {
-      return NextResponse.json({ error: 'User ID, title, and status are required' }, { status: 400 });
+    if (!task.user_id || !task.status) {
+      return NextResponse.json({ error: 'User ID and status are required' }, { status: 400 });
     }
 
     const { data, error } = await supabase
